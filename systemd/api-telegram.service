@@ -1,0 +1,11 @@
+[Unit]
+Description=Sending telegram notifications
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/usr/local/bin/api-telegram /etc/api-telegram
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

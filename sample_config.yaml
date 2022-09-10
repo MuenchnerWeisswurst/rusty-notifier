@@ -1,0 +1,11 @@
+api:
+  url: http://<host>/<rpc interface>
+  password: <rpc password>
+  update_key: <key>
+  login_method: <rpc method for login>
+  update_method: <rpc method for data>
+telegram:
+  token: <telegram bot token>
+  chatid: <chat id with the bot>
+storage: <where to store the previous data>
+interval: <update interval in seconds>
