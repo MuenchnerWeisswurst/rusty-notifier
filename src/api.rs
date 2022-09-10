@@ -134,7 +134,6 @@ fn get_state(
                 .flatten()
                 .map(String::from);
             let res_map = map
-                // TODO: Make this key configurable for legal reasons
                 .get(&config.update_key)
                 .and_then(|imap| match imap {
                     Value::Object(tmap) => {
