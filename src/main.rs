@@ -3,7 +3,7 @@ mod storage;
 
 use anyhow::Ok;
 use api::RpcRequest;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::env;
 use std::fs::File;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use tokio::{task, time};
 
 use serde_json::{Map, Value};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize)]
 pub struct ApiConfig {
     pub url: String,
     pub password: String,
@@ -23,12 +23,12 @@ pub struct ApiConfig {
     pub login_method: String,
     pub update_method: String,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 struct TelegramConfig {
     token: String,
     chatid: i64,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 struct Config {
     api: ApiConfig,
     telegram: TelegramConfig,

@@ -72,7 +72,7 @@ async fn send_request(
 
 async fn login(url: &String, client: &Client, request: &RpcRequest) -> Result<String, anyhow::Error> {
     let res = send_request(url, client, request, None).await?;
-    let headers = res.headers().clone();
+    let headers = res.headers().to_owned();
     let ok = res.json::<RpcResponse>().await.map(|t| match t.result {
         Value::Bool(a) => a && t.error.is_none(),
         _ => false,
