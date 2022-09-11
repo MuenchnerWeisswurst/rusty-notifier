@@ -5,6 +5,7 @@ use anyhow::Ok;
 use api::RpcRequest;
 use serde::Deserialize;
 use std::env;
+use std::fmt::format;
 use std::fs::File;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,9 +46,13 @@ fn read_config(config_fp: String) -> Result<Config, anyhow::Error> {
 async fn send_notification(chat_id: ChatId, bot: &AutoSend<Bot>, message: String) {
     match bot.send_message(chat_id, message).await {
         Result::Ok(_) => (),
-        Err(e) => panic!("Unabel to send message: {:?}", e),
+        // Debug error since it may not interrupt the logic (may be time out e.g.)
+        Err(e) => {
+            dbg!(e);
+        }
     }
 }
+
 
 async fn update(
     url: &String,
@@ -78,17 +83,26 @@ async fn update(
                         }
                     }
                     if let Result::Err(e) = save_current(storage_file, &s) {
-                        panic!("Could not save current state {:?}", e);
+                        // Exit program bc initial storage file cannot be created => unable to do the logic
+                        let msg = format!("Could not save current state {:?}", &e);
+                        send_notification(chat_id, bot, msg).await;
+                        panic!("Could not save current state {:?}", &e);
                     }
                 }
             } else {
                 match init_current(storage_file, &s) {
                     Result::Ok(_f) => (),
-                    Err(e) => panic!("{:?}", e),
+                    // Exit program bc initial storage file cannot be created => unable to do the logic
+                    Err(e) => {
+                        send_notification(chat_id, bot, format!("Unable to create init storage file {:?}", &e)).await;
+                        panic!("Unable to create init storage file {:?}", &e)
+                    },
                 }
             }
         }
         Err(e) => {
+            // Debug error since it may not interrupt the logic (may be time out e.g.)
+            send_notification(chat_id, bot, format!("Unabel to get current state {:?}", &e)).await;
             dbg!(e);
         }
     }
