@@ -5,7 +5,6 @@ use anyhow::Ok;
 use api::RpcRequest;
 use serde::Deserialize;
 use std::env;
-use std::fmt::format;
 use std::fs::File;
 use std::sync::Arc;
 use std::time::Duration;
