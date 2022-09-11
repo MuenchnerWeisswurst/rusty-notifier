@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
 use anyhow::anyhow;
-use reqwest::{blocking::*, header::HeaderMap};
+use reqwest::header::HeaderMap;
+use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use std::thread;
+use serde_json::Value;
 
-use crate::ApiConfig;
 const ACCEPT: &str = "Accept";
 const CONTENT: &str = "Content-Type";
 const COOKIE: &str = "set-cookie";
@@ -22,10 +21,10 @@ struct RpcResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct RpcRequest {
-    method: String,
-    params: Vec<Value>,
-    id: i32,
+pub struct RpcRequest {
+    pub method: String,
+    pub params: Vec<Value>,
+    pub id: i32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -44,44 +43,37 @@ fn get_headermap(cookie: Option<String>) -> HeaderMap {
     header_map
 }
 
-pub fn get_current_state(config: ApiConfig) -> Result<CurrentState, anyhow::Error> {
-    thread::spawn(move || {
+pub async fn get_current_state(
+    url: &String,
+    login_request: &RpcRequest,
+    update_request: &RpcRequest,
+    update_key: &String,
+) -> Result<CurrentState, anyhow::Error> {
         let client = Client::new();
-        if let Ok(cookie) = login(&config, &client) {
-            return get_state(&config, &client, cookie);
+        if let Ok(cookie) = login(url, &client, login_request).await {
+            return get_state(url, &client, update_request, update_key, cookie).await;
         }
         Err(anyhow!("Unable to do stuff"))
-    })
-    .join()
-    .expect("getting the current status thread failed")
 }
 
-fn send_request(
-    config: &ApiConfig,
+async fn send_request(
+    url: &String,
     client: &Client,
-    request: RpcRequest,
+    request: &RpcRequest,
     cookie: Option<String>,
 ) -> reqwest::Result<Response> {
     client
-        .post(&config.url)
-        .json(&request)
+        .post(url)
+        .json(request)
         .headers(get_headermap(cookie))
         .send()
+        .await
 }
 
-fn login(config: &ApiConfig, client: &Client) -> Result<String, anyhow::Error> {
-    let res = send_request(
-        config,
-        client,
-        RpcRequest {
-            method: config.login_method.clone(),
-            params: vec![Value::String(config.password.clone())],
-            id: 1,
-        },
-        None,
-    )?;
+async fn login(url: &String, client: &Client, request: &RpcRequest) -> Result<String, anyhow::Error> {
+    let res = send_request(url, client, request, None).await?;
     let headers = res.headers().clone();
-    let ok = res.json::<RpcResponse>().map(|t| match t.result {
+    let ok = res.json::<RpcResponse>().await.map(|t| match t.result {
         Value::Bool(a) => a && t.error.is_none(),
         _ => false,
     });
@@ -100,28 +92,14 @@ fn login(config: &ApiConfig, client: &Client) -> Result<String, anyhow::Error> {
         .map(String::from)
 }
 
-fn get_state(
-    config: &ApiConfig,
+async fn get_state(
+    url: &String,
     client: &Client,
+    request: &RpcRequest,
+    update_key: &String,
     cookie: String,
 ) -> Result<CurrentState, anyhow::Error> {
-    let res = send_request(
-        config,
-        client,
-        RpcRequest {
-            method: config.update_method.clone(),
-            params: vec![
-                Value::Array(vec![
-                    Value::String("name".to_string()),
-                    Value::String("progress".to_string()),
-                ]),
-                Value::Object(Map::new()),
-            ],
-            id: 1,
-        },
-        Some(cookie),
-    )?
-    .json::<RpcResponse>()?;
+    let res = send_request(url, client, request, Some(cookie)).await?.json::<RpcResponse>().await?;
 
     match res.result {
         Value::Object(ref map) => {
@@ -133,29 +111,27 @@ fn get_state(
                 })
                 .flatten()
                 .map(String::from);
-            let res_map = map
-                .get(&config.update_key)
-                .and_then(|imap| match imap {
-                    Value::Object(tmap) => {
-                        let res_map: HashMap<String, f64> = tmap
-                            .iter()
-                            .filter_map(|(_t_id, v)| match v {
-                                Value::Object(data) => {
-                                    let name =
-                                        data.get("name").and_then(|v| v.as_str()).map(String::from);
-                                    let progress = data.get("progress").and_then(|v| v.as_f64());
-                                    match (name, progress) {
-                                        (Some(n), Some(p)) => Some((n, p)),
-                                        _ => None,
-                                    }
+            let res_map = map.get(update_key).and_then(|imap| match imap {
+                Value::Object(tmap) => {
+                    let res_map: HashMap<String, f64> = tmap
+                        .iter()
+                        .filter_map(|(_t_id, v)| match v {
+                            Value::Object(data) => {
+                                let name =
+                                    data.get("name").and_then(|v| v.as_str()).map(String::from);
+                                let progress = data.get("progress").and_then(|v| v.as_f64());
+                                match (name, progress) {
+                                    (Some(n), Some(p)) => Some((n, p)),
+                                    _ => None,
                                 }
-                                _ => None,
-                            })
-                            .collect();
-                        Some(res_map)
-                    }
-                    _ => None,
-                });
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    Some(res_map)
+                }
+                _ => None,
+            });
             match (ip, res_map) {
                 (Some(iip), Some(map)) => Ok(CurrentState {
                     ip: iip,

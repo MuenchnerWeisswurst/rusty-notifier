@@ -1,15 +1,19 @@
 mod api;
+mod storage;
 
 use anyhow::Ok;
-use api::CurrentState;
+use api::RpcRequest;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::io::BufWriter;
+use std::fs::File;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{fs::File, io::BufReader};
+use storage::*;
 use teloxide::prelude::*;
 use tokio::task::JoinError;
 use tokio::{task, time};
+
+use serde_json::{Map, Value};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ApiConfig {
@@ -32,48 +36,36 @@ struct Config {
     interval: u64,
 }
 
-fn load_current(file_path: &String) -> Result<CurrentState, anyhow::Error> {
-    let f = File::open(file_path)?;
-    let reader = BufReader::new(f);
-    let u = serde_json::from_reader::<BufReader<File>, CurrentState>(reader)?;
-    Ok(u)
-}
-fn save_current(file_path: &String, current: &CurrentState) -> Result<(), anyhow::Error> {
-    let f = File::options().write(true).open(file_path)?;
-    let writer = BufWriter::new(f);
-    let u = serde_json::to_writer_pretty(writer, current)?;
-    Ok(u)
-}
-
-fn init_current(file_path: &String, current: &CurrentState) -> Result<(), anyhow::Error> {
-    let file = File::create(file_path)?;
-    serde_json::to_writer_pretty(file, current)?;
-    Ok(())
-}
-
 fn read_config(config_fp: String) -> Result<Config, anyhow::Error> {
     let f = File::open(config_fp)?;
     let c = serde_yaml::from_reader::<File, Config>(f)?;
     Ok(c)
 }
 
-async fn send_notification(config: &TelegramConfig, bot: &AutoSend<Bot>, message: String) {
-    match bot.send_message(ChatId(config.chatid), message).await {
+async fn send_notification(chat_id: ChatId, bot: &AutoSend<Bot>, message: String) {
+    match bot.send_message(chat_id, message).await {
         Result::Ok(_) => (),
         Err(e) => panic!("Unabel to send message: {:?}", e),
     }
 }
 
-async fn update(config: &Config, bot: &AutoSend<Bot>) {
-    match api::get_current_state(config.api.clone()) {
+async fn update(
+    url: &String,
+    login_request: &RpcRequest,
+    update_request: &RpcRequest,
+    update_key: &String,
+    storage_file: &String,
+    chat_id: ChatId,
+    bot: &AutoSend<Bot>,
+) {
+    match api::get_current_state(url, login_request, update_request, update_key).await {
         Result::Ok(s) => {
-            if let Result::Ok(previous) = load_current(&config.storage) {
-                let ip = s.ip.clone();
-                if previous.ip != ip {
+            if let Result::Ok(previous) = load_current(storage_file) {
+                if previous.ip != s.ip {
                     send_notification(
-                        &config.telegram,
+                        chat_id,
                         bot,
-                        format!("IP changed from {} to {}", &previous.ip, &ip),
+                        format!("IP changed from {} to {}", &previous.ip, &s.ip),
                     )
                     .await
                 }
@@ -82,17 +74,15 @@ async fn update(config: &Config, bot: &AutoSend<Bot>) {
                     let previous_progress = previous.queue.get(k);
                     if let Some(p) = previous_progress {
                         if v == &100.0 && p < &100.0 {
-                            // send notification
-                            send_notification(&config.telegram, bot, format!("Done with {}", &k))
-                                .await
+                            send_notification(chat_id, bot, format!("Done with {}", &k)).await
                         }
                     }
-                    if let Result::Err(e) = save_current(&config.storage, &s) {
+                    if let Result::Err(e) = save_current(storage_file, &s) {
                         panic!("Could not save current state {:?}", e);
                     }
                 }
             } else {
-                match init_current(&config.storage, &s) {
+                match init_current(storage_file, &s) {
                     Result::Ok(_f) => (),
                     Err(e) => panic!("{:?}", e),
                 }
@@ -116,12 +106,39 @@ async fn main() -> Result<(), JoinError> {
         Err(e) => panic!("Unable to read config file! : {:?}", e),
     };
 
+    let login_request = Arc::new(RpcRequest {
+        id: 1,
+        method: config.api.login_method,
+        params: vec![Value::String(config.api.password)],
+    });
+    let update_request = Arc::new(RpcRequest {
+        id: 1,
+        method: config.api.update_method,
+        params: vec![
+            Value::Array(vec![
+                Value::String("name".to_string()),
+                Value::String("progress".to_string()),
+            ]),
+            Value::Object(Map::new()),
+        ],
+    });
+    let url = Arc::new(config.api.url);
+    let update_key = Arc::new(config.api.update_key);
     let bot = Bot::new(&config.telegram.token).auto_send();
     let task = task::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(config.interval));
         loop {
             interval.tick().await;
-            update(&config, &bot).await;
+            update(
+                url.clone().as_ref(),
+                login_request.clone().as_ref(),
+                update_request.clone().as_ref(),
+                update_key.clone().as_ref(),
+                &config.storage,
+                ChatId(config.telegram.chatid),
+                &bot,
+            )
+            .await;
         }
     });
     task.await
