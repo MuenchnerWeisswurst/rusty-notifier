@@ -7,5 +7,7 @@ api:
 telegram:
   token: <telegram bot token>
   chatid: <chat id with the bot>
+  retries: <number of retries sending a message via telegram>
+  interval: <time to wait between retries in seconds>
 storage: <where to store the previous data>
 interval: <update interval in seconds>
