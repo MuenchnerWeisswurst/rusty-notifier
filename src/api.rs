@@ -49,11 +49,11 @@ pub async fn get_current_state(
     update_request: &RpcRequest,
     update_key: &String,
 ) -> Result<CurrentState, anyhow::Error> {
-        let client = Client::new();
-        if let Ok(cookie) = login(url, &client, login_request).await {
-            return get_state(url, &client, update_request, update_key, cookie).await;
-        }
-        Err(anyhow!("Unable to do stuff"))
+    let client = Client::new();
+    if let Ok(cookie) = login(url, &client, login_request).await {
+        return get_state(url, &client, update_request, update_key, cookie).await;
+    }
+    Err(anyhow!("Unable to do stuff"))
 }
 
 async fn send_request(
@@ -70,7 +70,11 @@ async fn send_request(
         .await
 }
 
-async fn login(url: &String, client: &Client, request: &RpcRequest) -> Result<String, anyhow::Error> {
+async fn login(
+    url: &String,
+    client: &Client,
+    request: &RpcRequest,
+) -> Result<String, anyhow::Error> {
     let res = send_request(url, client, request, None).await?;
     let headers = res.headers().to_owned();
     let ok = res.json::<RpcResponse>().await.map(|t| match t.result {
@@ -99,7 +103,10 @@ async fn get_state(
     update_key: &String,
     cookie: String,
 ) -> Result<CurrentState, anyhow::Error> {
-    let res = send_request(url, client, request, Some(cookie)).await?.json::<RpcResponse>().await?;
+    let res = send_request(url, client, request, Some(cookie))
+        .await?
+        .json::<RpcResponse>()
+        .await?;
 
     match res.result {
         Value::Object(ref map) => {

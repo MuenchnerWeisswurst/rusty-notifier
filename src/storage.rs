@@ -14,8 +14,8 @@ pub(crate) fn save_current(
 ) -> Result<(), anyhow::Error> {
     let f = File::options().write(true).open(file_path)?;
     let writer = BufWriter::new(f);
-    let u = serde_json::to_writer_pretty(writer, current)?;
-    Ok(u)
+    serde_json::to_writer_pretty(writer, current)?;
+    Ok(())
 }
 
 pub(crate) fn init_current(

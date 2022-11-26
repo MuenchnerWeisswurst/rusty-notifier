@@ -1,9 +1,16 @@
+extern crate pretty_env_logger;
+#[macro_use]
+extern crate log;
+
 mod api;
+mod notification_channels;
 mod storage;
 
 use anyhow::Ok;
 use api::RpcRequest;
+use log::debug;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::sync::Arc;
@@ -14,6 +21,8 @@ use tokio::task::JoinError;
 use tokio::{task, time};
 
 use serde_json::{Map, Value};
+
+use notification_channels::send_notfication_until;
 
 #[derive(Debug, Deserialize)]
 pub struct ApiConfig {
@@ -42,42 +51,6 @@ fn read_config(config_fp: String) -> Result<Config, anyhow::Error> {
     let f = File::open(config_fp)?;
     let c = serde_yaml::from_reader::<File, Config>(f)?;
     Ok(c)
-}
-
-async fn send_notification(chat_id: ChatId, bot: &AutoSend<Bot>, message: &String) -> bool {
-    match bot.send_message(chat_id, message).await {
-        Result::Ok(_) => false,
-        Err(e) => match e {
-            teloxide::RequestError::Network(err) => {
-                if err.is_timeout() {
-                    true
-                } else {
-                    dbg!(err);
-                    false
-                }
-            }
-            // Debug error since it may not interrupt the logic
-            _ => {
-                dbg!(e);
-                false
-            }
-        },
-    }
-}
-
-async fn send_notfication_until(
-    chat_id: ChatId,
-    bot: &AutoSend<Bot>,
-    retries: u8,
-    interval: u8,
-    message: String,
-) {
-    let mut tried = 0;
-    while tried < retries && send_notification(chat_id, bot, &message).await {
-        tried += 1;
-        dbg!("Retry {}", &tried);
-        let _ = time::sleep(time::Duration::from_secs(interval as u64));
-    }
 }
 
 async fn update(
@@ -133,7 +106,7 @@ async fn update(
                             msg,
                         )
                         .await;
-                        panic!("Could not save current state {:?}", &e);
+                        error!("Could not save current state {:?}", &e);
                     }
                 }
             } else {
@@ -149,7 +122,7 @@ async fn update(
                             format!("Unable to create init storage file {:?}", &e),
                         )
                         .await;
-                        panic!("Unable to create init storage file {:?}", &e)
+                        error!("Unable to create init storage file {:?}", &e)
                     }
                 }
             }
@@ -164,22 +137,76 @@ async fn update(
                 format!("Unabel to get current state {:?}", &e),
             )
             .await;
-            dbg!(e);
+            debug!("{}", e);
         }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), JoinError> {
+    pretty_env_logger::init();
     let mut args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: api-telegram <path/to/config>")
-    }
-
-    let config = Arc::new(match read_config(args.pop().unwrap()) {
-        Result::Ok(c) => c,
-        Err(e) => panic!("Unable to read config file! : {:?}", e),
-    });
+    let config = if args.len() != 2 {
+        let keys = vec![
+            "API_URL",
+            "API_PASSWORD",
+            "API_UPDATE_KEY",
+            "API_LOGIN_METHOD",
+            "API_UPDATE_METHOD",
+            "TELEGRAM_TOKEN",
+            "TELEGRAM_CHAT_ID",
+            "TELEGRAM_RETRIES",
+            "TELEGRAM_INTERVAL",
+            "STORAGE",
+            "POLL_INTERVAL",
+        ];
+        let values = keys
+            .iter()
+            .map(|k| {
+                if let Result::Ok(v) = env::var(k) {
+                    (String::from(*k), v)
+                } else {
+                    panic!("{k} must be set!")
+                }
+            })
+            .collect::<HashMap<String, String>>();
+        let api_config = ApiConfig {
+            url: values.get("API_URL").unwrap().to_owned(),
+            password: values.get("API_PASSWORD").unwrap().to_owned(),
+            update_key: values.get("API_UPDATE_KEY").unwrap().to_owned(),
+            login_method: values.get("API_LOGIN_METHOD").unwrap().to_owned(),
+            update_method: values.get("API_UPDATE_METHOD").unwrap().to_owned(),
+        };
+        let telegram_config = TelegramConfig {
+            token: values.get("TELEGRAM_TOKEN").unwrap().to_owned(),
+            chatid: values
+                .get("TELEGRAM_CHAT_ID")
+                .and_then(|id| id.parse::<i64>().ok())
+                .unwrap(),
+            retries: values
+                .get("TELEGRAM_RETRIES")
+                .and_then(|r| r.parse::<u8>().ok())
+                .unwrap(),
+            interval: values
+                .get("TELEGRAM_INTERVAL")
+                .and_then(|i| i.parse::<u8>().ok())
+                .unwrap(),
+        };
+        Arc::new(Config {
+            api: api_config,
+            telegram: telegram_config,
+            storage: values.get("STORAGE").unwrap().to_owned(),
+            interval: values
+                .get("POLL_INTERVAL")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap(),
+        })
+    } else {
+        Arc::new(match read_config(args.pop().unwrap()) {
+            Result::Ok(c) => c,
+            Err(e) => panic!("Unable to read config file! : {:?}", e),
+        })
+    };
 
     let login_request = Arc::new(RpcRequest {
         id: 1,
