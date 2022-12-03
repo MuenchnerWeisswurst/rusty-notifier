@@ -69,6 +69,7 @@ async fn update(
     .await
     {
         Result::Ok(s) => {
+            trace!("Got new state: {:?}", s);
             if let Result::Ok(previous) = load_current(&config.storage) {
                 if previous.ip != s.ip {
                     send_notfication_until(
