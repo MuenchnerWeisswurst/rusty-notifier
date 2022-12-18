@@ -95,20 +95,29 @@ async fn update(
                             )
                             .await;
                         }
-                    }
-                    if let Result::Err(e) = save_current(&config.storage, &s) {
-                        // Exit program bc initial storage file cannot be created => unable to do the logic
-                        let msg = format!("Could not save current state {:?}", &e);
+                    } else if previous_progress.is_none() && v == &100.0 {
                         send_notfication_until(
                             chat_id,
                             bot,
                             config.telegram.retries,
                             config.telegram.interval,
-                            msg,
+                            format!("Done with {}", &k),
                         )
                         .await;
-                        error!("Could not save current state {:?}", &e);
                     }
+                }
+                if let Result::Err(e) = save_current(&config.storage, &s) {
+                    // Exit program bc initial storage file cannot be created => unable to do the logic
+                    let msg = format!("Could not save current state {:?}", &e);
+                    send_notfication_until(
+                        chat_id,
+                        bot,
+                        config.telegram.retries,
+                        config.telegram.interval,
+                        msg,
+                    )
+                    .await;
+                    error!("Could not save current state {:?}", &e);
                 }
             } else {
                 match init_current(&config.storage, &s) {
