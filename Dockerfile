@@ -1,14 +1,25 @@
-FROM rust:latest as builder
+FROM lukemathwalker/cargo-chef:latest-rust-1.59.0 AS chef
 RUN update-ca-certificates
 RUN apt update && apt install -y libssl-dev  && rm -rf /var/lib/apt/lists/*
-WORKDIR /usr/src/myapp
-COPY . .
+
+WORKDIR /app/
+
+FROM chef AS planner
+COPY ./src ./src
+COPY ./Cargo.toml ./Cargo.toml
+
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder 
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook --release --recipe-path recipe.json
+# Build application
+COPY ./src ./src
+COPY ./Cargo.toml ./Cargo.toml
 RUN cargo build --release
 
-FROM debian:buster-slim
-RUN apt update && apt install -y libssl1.1 ca-certificates  && rm -rf /var/lib/apt/lists/*
-RUN mkdir /app/
-COPY --from=builder /usr/src/myapp/target/release/rusty-notify /app/rusty-notify
-
+FROM gcr.io/distroless/cc
 WORKDIR /app
+COPY --from=builder /app/target/release/rusty-notify /app/rusty-notify
 CMD ["./rusty-notify"]
